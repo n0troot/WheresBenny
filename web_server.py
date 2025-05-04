@@ -201,19 +201,41 @@ def generate_game_html(game_id, game):
                 max-width: 100%;
                 cursor: crosshair;
                 display: inline-block; /* Keep container tight to image */
+                -webkit-tap-highlight-color: rgba(0,0,0,0); /* Remove tap highlight on iOS */
+                touch-action: manipulation; /* Improve touch response */
             }}
             .game-image img {{
                 max-width: 100%;
                 height: auto;
                 border: 2px solid #333;
                 display: block; /* Remove extra space below image */
+                -webkit-user-select: none; /* Prevent selection on iOS */
+                user-select: none; /* Standard syntax */
+                -webkit-touch-callout: none; /* Disable callout */
             }}
-            .benny-target {{
+            /* Benny target indicator - only visible in debug mode */
+            .benny-target-debug {{
                 position: absolute;
-                /* No background or border so it's invisible */
-                z-index: 10;
-                /* cursor will be set to inherit from parent to avoid showing hand cursor */
+                border: 2px dashed red;
+                background-color: rgba(255,0,0,0.3);
+                pointer-events: none;
+                z-index: 100;
+                display: none; /* Hidden by default */
             }}
+            /* Style to prevent visible cursor change over clickable area */
+            area {{
+                cursor: inherit !important;
+            }}
+            /* For debug mode only - uncomment to see Benny's hitbox */
+            /*
+            .debug-hitbox {{
+                position: absolute;
+                border: 2px solid red;
+                background-color: rgba(255,0,0,0.3);
+                pointer-events: none;
+                z-index: 100;
+            }}
+            */
             .timer {{
                 margin-top: 20px;
                 font-size: 18px;
@@ -281,12 +303,10 @@ def generate_game_html(game_id, game):
             <h1>Where's Benny?</h1>
             <div class="instructions">Find and click on Benny in the image below!</div>
             
-            <div class="game-image">
-                <img src="/images/{game_id}.png" alt="Where's Benny?">
-                <!-- Clickable div overlay instead of image map for better mobile support -->
-                <div class="benny-target" id="bennyTarget"
-                    style="left: {x}px; top: {y}px; width: {width}px; height: {height}px;"
-                    onclick="foundBenny()"></div>
+            <div class="game-image" id="gameImageContainer">
+                <img src="/images/{game_id}.png" id="gameImage" alt="Where's Benny?">
+                <!-- We'll handle click detection in JavaScript for faster mobile response -->
+                <!-- Benny's position is at: x={x}, y={y}, w={width}, h={height} -->
             </div>
             
             <div class="timer">Game expires in <span id="countdown">5:00</span></div>
@@ -303,78 +323,24 @@ def generate_game_html(game_id, game):
         </div>
         
         <script>
+            // Store Benny's position and game data
+            const bennyData = {{
+                x: {x},
+                y: {y},
+                width: {width},
+                height: {height},
+                padding: 15  // Extra padding to make it easier to tap
+            }};
+            
             // Setup countdown timer
             let timeLeft = {int(game["expiry_time"] - time.time())};
             const countdownEl = document.getElementById('countdown');
             const nameModal = document.getElementById('nameModal');
             
-            // Ensure proper scaling on mobile
-            function adjustImageScale() {{
-                // Get the actual displayed image dimensions
-                const img = document.querySelector('.game-image img');
-                const bennyTarget = document.querySelector('.benny-target');
-                
-                if (!img || !bennyTarget) return;
-                
-                // Calculate scale ratio
-                const naturalWidth = img.naturalWidth;
-                const displayWidth = img.clientWidth;
-                const scale = displayWidth / naturalWidth;
-                
-                // Get original Benny position and size (these are in the original image size)
-                const originalLeft = parseInt(bennyTarget.style.left);
-                const originalTop = parseInt(bennyTarget.style.top);
-                const originalWidth = parseInt(bennyTarget.style.width);
-                const originalHeight = parseInt(bennyTarget.style.height);
-                
-                // Scale position and size to match displayed image
-                bennyTarget.style.left = (originalLeft * scale) + 'px';
-                bennyTarget.style.top = (originalTop * scale) + 'px';
-                bennyTarget.style.width = (originalWidth * scale) + 'px';
-                bennyTarget.style.height = (originalHeight * scale) + 'px';
-            }}
-            
-            // Special iOS Safari touch handling
-            function setupTouchHandlers() {{
-                const bennyTarget = document.getElementById('bennyTarget');
-                if (!bennyTarget) return;
-                
-                // Add all types of touch events to ensure cross-browser compatibility
-                // especially for iOS Safari which is more restrictive
-                
-                // For iOS Safari
-                bennyTarget.addEventListener('touchstart', function(e) {{
-                    e.preventDefault();  // Prevent scrolling/zooming
-                    foundBenny();
-                    return false;
-                }}, false);
-                
-                // Also add these events to be thorough
-                bennyTarget.addEventListener('touchend', function(e) {{
-                    e.preventDefault();
-                    return false;
-                }}, false);
-                
-                bennyTarget.addEventListener('touchmove', function(e) {{
-                    e.preventDefault();
-                    return false;
-                }}, false);
-                
-                // Make the target area slightly larger for touch devices
-                bennyTarget.style.padding = '10px';
-                bennyTarget.style.margin = '-10px';
-            }}
-            
-            // Call on load and resize
-            window.addEventListener('load', function() {{
-                adjustImageScale();
-                setupTouchHandlers();
-            }});
-            window.addEventListener('resize', adjustImageScale);
-            
+            // Simple timer function
             function updateTimer() {{
                 if (timeLeft <= 0) {{
-                    window.location.href = "/";
+                    window.location.href = "/"; // Game expired
                     return;
                 }}
                 
@@ -385,22 +351,121 @@ def generate_game_html(game_id, game):
                 setTimeout(updateTimer, 1000);
             }}
             
+            // Start the timer
             updateTimer();
             
-            // Function when Benny is found - show modal instead of redirecting
-            function foundBenny() {{
-                nameModal.style.display = 'flex';
-                document.getElementById('username-input').focus();
+            // Fast mobile touch handling (no delay)
+            function setupFastTouchHandling() {{
+                const container = document.getElementById('gameImageContainer');
+                const img = document.getElementById('gameImage');
                 
-                // Also allow Enter key to submit
+                if (!container || !img) return;
+                
+                // Pre-calculate values once for better performance
+                let imgWidth, imgHeight, scaleX, scaleY;
+                
+                function updateDimensions() {{
+                    // Get current display dimensions
+                    imgWidth = img.clientWidth;
+                    imgHeight = img.clientHeight;
+                    
+                    // Calculate scale ratio
+                    scaleX = imgWidth / img.naturalWidth;
+                    scaleY = imgHeight / img.naturalHeight;
+                    
+                    // DEBUG: Uncomment to show Benny's location
+                    // showDebugOverlay();
+                }}
+                
+                // Optional: Show debug overlay to see where Benny is located
+                function showDebugOverlay() {{
+                    let overlay = document.querySelector('.benny-target-debug');
+                    if (!overlay) {{
+                        overlay = document.createElement('div');
+                        overlay.className = 'benny-target-debug';
+                        container.appendChild(overlay);
+                    }}
+                    
+                    // Position the overlay at Benny's location
+                    const scaledX = bennyData.x * scaleX;
+                    const scaledY = bennyData.y * scaleY;
+                    const scaledWidth = bennyData.width * scaleX;
+                    const scaledHeight = bennyData.height * scaleY;
+                    
+                    overlay.style.left = scaledX + 'px';
+                    overlay.style.top = scaledY + 'px';
+                    overlay.style.width = scaledWidth + 'px';
+                    overlay.style.height = scaledHeight + 'px';
+                    overlay.style.display = 'block';
+                }}
+                
+                // Handle click/tap events with maximum efficiency
+                function handleInteraction(event) {{
+                    // Get interaction coordinates
+                    let x, y;
+                    
+                    // Touch event
+                    if (event.touches && event.touches.length > 0) {{
+                        const rect = img.getBoundingClientRect();
+                        x = event.touches[0].clientX - rect.left;
+                        y = event.touches[0].clientY - rect.top;
+                        event.preventDefault(); // Prevent scrolling/zooming
+                    }} 
+                    // Mouse event
+                    else {{
+                        const rect = img.getBoundingClientRect();
+                        x = event.clientX - rect.left;
+                        y = event.clientY - rect.top;
+                    }}
+                    
+                    // Calculate scaled position of Benny
+                    const scaledX = bennyData.x * scaleX;
+                    const scaledY = bennyData.y * scaleY;
+                    const scaledWidth = bennyData.width * scaleX;
+                    const scaledHeight = bennyData.height * scaleY;
+                    const padding = bennyData.padding * scaleX; // Scale padding too
+                    
+                    // Check if click/tap is on Benny
+                    if (x >= (scaledX - padding) && 
+                        x <= (scaledX + scaledWidth + padding) && 
+                        y >= (scaledY - padding) && 
+                        y <= (scaledY + scaledHeight + padding)) {{
+                        foundBenny();
+                        return false;
+                    }}
+                }}
+                
+                // Add all event listeners with the right flags for performance
+                img.addEventListener('click', handleInteraction, false);
+                img.addEventListener('touchstart', handleInteraction, {{passive: false}});
+                
+                // Handle resize to keep coordinates correct
+                window.addEventListener('resize', updateDimensions);
+                
+                // Initialize dimensions
+                img.onload = updateDimensions;
+                // If image might already be loaded
+                if (img.complete) {{
+                    updateDimensions();
+                }}
+            }}
+            
+            // When Benny is found, show the name input modal
+            function foundBenny() {{
+                // Show modal immediately (better response time)
+                nameModal.style.display = 'flex';
+                
+                // Focus the input field (slight delay to ensure modal is visible first)
+                setTimeout(function() {{
+                    document.getElementById('username-input').focus();
+                }}, 10);
+                
+                // Allow Enter key to submit
                 document.getElementById('username-input').addEventListener('keyup', function(event) {{
                     if (event.key === 'Enter') {{
                         submitName();
                     }}
                 }});
-                
-                // Prevent event propagation
-                return false;
             }}
             
             // Submit name and redirect
@@ -408,6 +473,12 @@ def generate_game_html(game_id, game):
                 const name = document.getElementById('username-input').value || 'Anonymous';
                 window.location.href = `/found/{game_id}?user=${{encodeURIComponent(name)}}`;
             }}
+            
+            // Initialize everything when page loads
+            window.addEventListener('DOMContentLoaded', function() {{
+                setupFastTouchHandling();
+            }});
+            
         </script>
     </body>
     </html>
