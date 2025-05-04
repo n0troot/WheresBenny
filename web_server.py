@@ -284,9 +284,8 @@ def generate_game_html(game_id, game):
             <div class="game-image">
                 <img src="/images/{game_id}.png" alt="Where's Benny?">
                 <!-- Clickable div overlay instead of image map for better mobile support -->
-                <div class="benny-target" 
+                <div class="benny-target" id="bennyTarget"
                     style="left: {x}px; top: {y}px; width: {width}px; height: {height}px;"
-                    ontouchstart="foundBenny(); event.preventDefault();" 
                     onclick="foundBenny()"></div>
             </div>
             
@@ -335,8 +334,42 @@ def generate_game_html(game_id, game):
                 bennyTarget.style.height = (originalHeight * scale) + 'px';
             }}
             
+            // Special iOS Safari touch handling
+            function setupTouchHandlers() {{
+                const bennyTarget = document.getElementById('bennyTarget');
+                if (!bennyTarget) return;
+                
+                // Add all types of touch events to ensure cross-browser compatibility
+                // especially for iOS Safari which is more restrictive
+                
+                // For iOS Safari
+                bennyTarget.addEventListener('touchstart', function(e) {{
+                    e.preventDefault();  // Prevent scrolling/zooming
+                    foundBenny();
+                    return false;
+                }}, false);
+                
+                // Also add these events to be thorough
+                bennyTarget.addEventListener('touchend', function(e) {{
+                    e.preventDefault();
+                    return false;
+                }}, false);
+                
+                bennyTarget.addEventListener('touchmove', function(e) {{
+                    e.preventDefault();
+                    return false;
+                }}, false);
+                
+                // Make the target area slightly larger for touch devices
+                bennyTarget.style.padding = '10px';
+                bennyTarget.style.margin = '-10px';
+            }}
+            
             // Call on load and resize
-            window.addEventListener('load', adjustImageScale);
+            window.addEventListener('load', function() {{
+                adjustImageScale();
+                setupTouchHandlers();
+            }});
             window.addEventListener('resize', adjustImageScale);
             
             function updateTimer() {{
